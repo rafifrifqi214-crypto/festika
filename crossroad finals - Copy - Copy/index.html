@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Game Menyeberang Jalan Melewati Mobil Yang Kebut-Kebutan</title>
+  <style>
+    body{margin:0;background:#062c33;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif}
+    .wrap{width:900px;max-width:95vw;background:#0d3a45;padding:10px;border-radius:10px;box-shadow:0 0 20px #0008}
+    canvas{background:#1e4f59;border-radius:10px;display:block;margin:auto}
+    .hud{color:#fff;display:flex;gap:20px;padding:10px;align-items:center}
+    button{padding:6px 14px;border-radius:6px;background:#0a8ca6;border:none;color:#fff;cursor:pointer;font-weight:bold}
+    .overlay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#0009;color:#fff;padding:20px;border-radius:10px;text-align:center;min-width:260px}
+  </style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="hud">
+    <div>Nyawa: <span id="lives">3</span></div>
+    <div>Skor: <span id="score">0</span></div>
+    <div>Level: <span id="level">1</span></div>
+    <div style="margin-left:auto"><button id="restartBtn">Mulai Ulang</button></div>
+  </div>
+
+  <div style="position:relative">
+    <canvas id="gameCanvas" width="840" height="560"></canvas>
+
+    <div id="overlayStart" class="overlay">
+      <h2>Mulai Game</h2>
+      <p>Tujuan: bantu kakek menyeberang ke sisi atas jalan tanpa tertabrak.</p>
+      <p>Kendalikan dengan panah / WASD atau tombol sentuh.</p>
+      <p>Setiap kali berhasil ke seberang -> dapat skor & level naik (lebih sulit).</p>
+      <button id="startBtn">Mulai</button>
+    </div>
+
+    <div id="overlayGameOver" class="overlay" style="display:none">
+      <h2>Game Over</h2>
+      <p>Skor Anda: <span id="finalScore">0</span></p>
+      <button id="tryAgainBtn">Main Lagi</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ==============================
+// ASSETS
+// ==============================
+const carImages = [
+  "assets/mobil_kuning.jpg",
+  "assets/mobil_biru.jpg",
+  "assets/formula.jpg",
+  "assets/truk.jpg"
+];
+
+const bgImages = [
+  "assets/jalan1.jpg",
+  "assets/jalan2.jpg",
+  "assets/jalan3.jpg"
+];
+
+const loadedCars = [];
+let imagesLoaded = 0;
+
+carImages.forEach(src => {
+  const img = new Image();
+  img.src = src;
+  img.onload = () => imagesLoaded++;
+  loadedCars.push(img);
+});
+
+const loadedBgs = [];
+let bgsLoaded = 0;
+
+bgImages.forEach(src => {
+  const bg = new Image();
+  bg.src = src;
+  bg.onload = () => bgsLoaded++;
+  loadedBgs.push(bg);
+});
+
+let bgIndex = 0;
+let bgImage = loadedBgs[bgIndex] || null;
+
+let playerImg = new Image();
+playerImg.src = "assets/kakek_bg.jpg";
+
+// ==============================
+// VARIABEL GAME
+// ==============================
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+let W = canvas.width, H = canvas.height;
+
+let running = false;
+let lives = 3;
+let score = 0;
+let level = 1;
+
+let cars = [];
+let lastSpawn = 0;
+let spawnInterval = 1500;
+
+const player = { x: W/2-20, y: H-60, w: 40, h: 40, speed: 4 };
+const keys = {};
+
+let isCountdown = false;
+let countdown = 3;
+
+let levelMessage = "";
+let levelMessageOpacity = 0;
+let levelMessageState = "";  // fadein, show, fadeout
+
+const overlayStart = document.getElementById("overlayStart");
+const overlayGameOver = document.getElementById("overlayGameOver");
+
+// ==============================
+// EVENT KEYBOARD
+// ==============================
+window.addEventListener("keydown", e => { if (!isCountdown) keys[e.key] = true; });
+window.addEventListener("keyup", e => { keys[e.key] = false; });
+
+// ==============================
+// UTIL
+// ==============================
+function isCollide(a,b){
+  return !(a.x+a.w < b.x || a.x > b.x+b.w || a.y+a.h < b.y || a.y > b.y+b.h);
+}
+
+function updateHUD(){
+  document.getElementById('lives').textContent = lives;
+  document.getElementById('score').textContent = score;
+  document.getElementById('level').textContent = level;
+}
+
+// ==============================
+// SPAWN MOBIL
+// ==============================
+function spawnCar(){
+  if (isCountdown) return;
+  if (imagesLoaded < carImages.length) return;
+
+  const img = loadedCars[Math.floor(Math.random()*loadedCars.length)];
+  const laneY = 100 + Math.floor(Math.random()*4) * 90;
+  const speed = 2 + Math.random()*2 + (level-1)*0.2;
+
+  cars.push({ x: -200, y: laneY, w: img.width*0.28, h: img.height*0.28, spd: speed, img });
+}
+
+// ==============================
+// LEVEL / COUNTDOWN
+// ==============================
+function startLevel(){
+  isCountdown = true;
+  countdown = 3;
+
+  const t = setInterval(()=>{
+    countdown--;
+    if (countdown <= 0){
+      clearInterval(t);
+      isCountdown = false;
+    }
+  },1000);
+}
+
+function levelUp(){
+  level++;
+
+  if (level % 5 === 0){
+    bgIndex = (bgIndex + 1) % Math.max(1, loadedBgs.length);
+    bgImage = loadedBgs[bgIndex] || null;
+  }
+
+  // === ANIMASI LEVEL ===
+  levelMessage = "LEVEL " + level + " DIMULAI!";
+  levelMessageOpacity = 0;
+  levelMessageState = "fadein";
+  // =====================
+
+  spawnInterval = Math.max(500, spawnInterval - 80);
+
+  player.x = W/2;
+  player.y = H-60;
+
+  updateHUD();
+  startLevel();
+}
+
+// ==============================
+// UPDATE
+// ==============================
+function update(dt){
+  if (isCountdown) return;
+
+  if (keys["ArrowLeft"] || keys["a"]) player.x -= player.speed;
+  if (keys["ArrowRight"] || keys["d"]) player.x += player.speed;
+  if (keys["ArrowUp"] || keys["w"]) player.y -= player.speed;
+  if (keys["ArrowDown"] || keys["s"]) player.y += player.speed;
+
+  player.x = Math.max(0, Math.min(W-player.w, player.x));
+  player.y = Math.max(0, Math.min(H-player.h, player.y));
+
+  lastSpawn += dt;
+  if (lastSpawn > spawnInterval){
+    spawnCar();
+    lastSpawn = 0;
+  }
+
+  for (let i=cars.length-1; i>=0; i--){
+    const c = cars[i];
+    c.x += c.spd;
+
+    if (c.x > W+300) cars.splice(i,1);
+
+    if (isCollide(player,c)){
+      lives--;
+      updateHUD();
+      cars.splice(i,1);
+      player.x = W/2; 
+      player.y = H-60;
+      if (lives <= 0) return endGame();
+    }
+  }
+
+  if (player.y < 40){
+    score += 10 * level;
+    updateHUD();
+    levelUp();
+  }
+}
+
+// ==============================
+// DRAW
+// ==============================
+function draw(){
+  ctx.clearRect(0,0,W,H);
+
+  if (bgImage && bgImage.complete){
+    ctx.drawImage(bgImage, 0, 0, W, H);
+  } else {
+    ctx.fillStyle="#333";
+    ctx.fillRect(0,80,W,400);
+  }
+
+  // ==== ANIMASI LEVEL MESSAGE ====
+  if (levelMessageState !== ""){
+    if (levelMessageState === "fadein"){
+     levelMessageOpacity += 0.03;
+     if (levelMessageOpacity >= 1){
+       levelMessageOpacity = 1;
+       levelMessageState = "show";
+       setTimeout(()=> levelMessageState="fadeout", 600);
+     }
+    } else if (levelMessageState === "fadeout"){
+      levelMessageOpacity -= 0.03;
+      if (levelMessageOpacity <= 0){
+        levelMessageOpacity = 0;
+        levelMessageState = "";
+      }
+    }
+
+    ctx.save();
+    ctx.globalAlpha = levelMessageOpacity;
+    ctx.fillStyle='rgba(0,0,0,0.6)';
+    ctx.fillRect(W/2-160, H/2-120, 320,80);
+
+    ctx.fillStyle='#00ffea';
+    ctx.font='32px Arial';
+    ctx.textAlign="center";
+    ctx.fillText(levelMessage, W/2, H/2-70);
+    ctx.restore();
+  }
+  // ===============================
+
+  cars.forEach(c => {
+    if (c.img && c.img.complete)
+      ctx.drawImage(c.img, c.x, c.y, c.w, c.h);
+  });
+
+  if (playerImg.complete)
+    ctx.drawImage(playerImg, player.x, player.y, player.w, player.h);
+  else {
+    ctx.fillStyle="yellow";
+    ctx.fillRect(player.x, player.y, player.w, player.h);
+  }
+
+  if (isCountdown){
+    ctx.fillStyle='rgba(0,0,0,0.6)';
+    ctx.fillRect(W/2-80, H/2-80,160,160);
+    ctx.fillStyle='#fff';
+    ctx.font='72px Arial';
+    ctx.textAlign='center';
+    ctx.fillText(countdown, W/2, H/2+24);
+  }
+}
+
+// ==============================
+// MAIN LOOP
+// ==============================
+let last=0;
+function loop(ts){
+  if (!running) return;
+  const dt = ts-last; last=ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+// ==============================
+// START & END
+// ==============================
+function startGame(){
+  if (imagesLoaded < carImages.length){
+    const wait = setInterval(()=>{
+      if (imagesLoaded >= carImages.length){
+        clearInterval(wait);
+        doStart();
+      }
+    },200);
+  } else doStart();
+}
+
+function doStart(){
+  running = true;
+  lives=3;
+  score=0;
+  level=1;
+  cars=[];
+  spawnInterval=1500;
+
+  player.x=W/2;
+  player.y=H-60;
+
+  overlayStart.style.display='none';
+  overlayGameOver.style.display='none';
+
+  updateHUD();
+  startLevel();
+
+  last = performance.now();
+  requestAnimationFrame(loop);
+}
+
+function endGame(){
+  running=false;
+  document.getElementById("finalScore").textContent = score;
+  overlayGameOver.style.display="block";
+}
+
+// ==============================
+// BUTTONS
+// ==============================
+document.getElementById("startBtn").onclick = startGame;
+document.getElementById("restartBtn").onclick = startGame;
+document.getElementById("tryAgainBtn").onclick = startGame;
+
+updateHUD();
+</script>
+
+</body>
+</html>
